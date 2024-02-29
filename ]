@@ -1,0 +1,262 @@
+#include "funcs.c"
+
+void emu_cycle(chip8_t *chip8) {
+  chip8->opcode = chip8->memory[chip8->pc] << 8 | chip8->memory[chip8->pc + 1];
+  chip8->pc += 2;
+
+  int X = (chip8->opcode & 0x0F00) >> 8;
+  int Y = (chip8->opcode & 0x00F0) >> 4;
+
+  int N = chip8->opcode & 0x000F;
+  int NN = chip8->opcode & 0x00FF;
+  unsigned short NNN = chip8->opcode & 0x0FFF;
+
+  // Specific opcodes
+  switch (chip8->opcode) {
+  case 0x00E0:
+    clear_screen(chip8);
+    break;
+
+  case 0x00EE:
+    chip8->sp -= 1;
+    chip8->pc = chip8->stack[chip8->sp];
+    break;
+
+  default:
+    break;
+  }
+
+  // Checking for first digit
+  switch (chip8->opcode >> 12 | 0x0000) {
+  case 1:
+    chip8->pc = NNN;
+    break;
+
+  case 2:
+    chip8->stack[chip8->sp] = chip8->pc;
+    chip8->sp += 1;
+
+    chip8->pc = NNN;
+    break;
+
+  case 3:
+    if (chip8->V[X] == NN) {
+      chip8->pc += 2;
+    }
+    break;
+
+  case 4:
+    if (chip8->V[X] != NN) {
+      chip8->pc += 2;
+    }
+    break;
+
+  case 5:
+    if (N == 0) {
+      if (chip8->V[X] == chip8->V[Y]) {
+        chip8->pc += 2;
+      }
+    }
+    break;
+
+  case 6:
+    chip8->V[X] = NN;
+    break;
+
+  case 7:
+    chip8->V[X] += NN;
+    break;
+
+  case 8:
+    switch (N) {
+    case 0:
+      chip8->V[X] = chip8->V[Y];
+      break;
+
+    case 1:
+      chip8->V[X] |= chip8->V[Y];
+      chip8->V[0xF] = 0;
+      break;
+
+    case 2:
+      chip8->V[X] &= chip8->V[Y];
+      chip8->V[0xF] = 0;
+      break;
+
+    case 3:
+      chip8->V[X] ^= chip8->V[Y];
+      chip8->V[0xF] = 0;
+      break;
+
+    case 4: {
+      add(chip8->opcode, chip8);
+      break;
+    }
+
+    case 5: {
+      subtract(chip8->opcode, chip8);
+      break;
+    }
+
+    case 6: {
+      chip8->V[X] = chip8->V[Y];
+      int temp = chip8->V[X] & 1;
+      chip8->V[X] >>= 1;
+      chip8->V[0xF] = temp;
+      break;
+    }
+
+    case 7: {
+      int temp = chip8->V[Y] - chip8->V[X];
+      chip8->V[X] = temp;
+      chip8->V[0xF] = temp > 0;
+      break;
+    }
+
+    case 0xE: {
+      chip8->V[X] = chip8->V[Y];
+      int temp = (chip8->V[X] >> 7) & 1;
+      chip8->V[X] <<= 1;
+      chip8->V[0xF] = temp;
+      break;
+    }
+
+    default:
+      break;
+    }
+
+  case 9:
+    if (N == 0) {
+      if (chip8->V[X] != chip8->V[Y]) {
+        chip8->pc += 2;
+      }
+    }
+    break;
+
+  case 10:
+    chip8->I = NNN;
+    break;
+
+  case 11:
+    chip8->pc = NNN + chip8->V[0];
+    break;
+
+  case 12:
+    chip8->V[X] = (rand() % 256) & NN;
+    break;
+
+  case 0xD: {
+    draw_sprite(chip8->opcode, chip8);
+  } break;
+
+  case 0xE:
+    switch (chip8->opcode & 0x00FF) {
+    case 0x9E:
+      if (chip8->key[chip8->V[X]]) {
+        chip8->pc += 2;
+      }
+      break;
+
+    case 0xA1:
+      if (!chip8->key[chip8->V[X]]) {
+        chip8->pc += 2;
+      }
+      break;
+
+    default:
+      break;
+    }
+    break;
+
+  case 0xF:
+    switch (NN) {
+    case 0x07:
+      chip8->V[X] = chip8->delay_timer;
+      break;
+
+    case 0x15:
+      chip8->delay_timer = chip8->V[X];
+      break;
+
+    case 0x18:
+      chip8->sound_timer = chip8->V[X];
+      break;
+
+    case 0x1E:
+      chip8->I += chip8->V[X];
+      break;
+
+    case 0x0A: {
+      get_key(chip8->opcode, chip8);
+    }
+
+    case 0x29:
+      chip8->I = chip8->V[X] * 5;
+      break;
+
+    case 0x33: {
+      chip8->memory[chip8->I] = chip8->V[X] / 100;
+      chip8->memory[chip8->I + 1] = (chip8->V[X] % 100) / 10;
+      chip8->memory[chip8->I + 2] = chip8->V[X] % 10;
+      break;
+    }
+
+    case 0x55:
+      for (int i = 0; i <= X; i++) {
+        chip8->memory[chip8->I++] = chip8->V[i];
+      }
+      break;
+
+    case 0x65:
+      for (int i = 0; i <= X; i++) {
+        chip8->V[i] = chip8->memory[chip8->I++];
+      }
+      break;
+    }
+    break;
+
+  default:
+    break;
+  }
+}
+
+int main(int argc, char *argv[]) {
+  if (argc < 2) {
+    printf("Usage: input with the ROM file to open\n");
+    return 1;
+  }
+
+  config_t config;
+  init_config(&config);
+
+  sdl_t sdl;
+  if (!init_sdl(&sdl, config)) {
+    printf("Failed to initialise SDL\n");
+    return 1;
+  }
+
+  chip8_t chip8;
+  if (!init_chip(&chip8, argv[1])) {
+    printf("Failed to initialise CHIP8\n");
+    return 1;
+  }
+  clear_screen(&chip8);
+
+  while (chip8.state == RUNNING) {
+    for (int i = 0; i < 700 / 60; i++) {
+      emu_cycle(&chip8);
+      handle_user_input(&sdl, &chip8);
+    }
+    SDL_Delay(16);
+    if (chip8.delay_timer > 0) {
+      chip8.delay_timer -= 1;
+    }
+    if (chip8.sound_timer > 0) {
+      chip8.sound_timer -= 1;
+    }
+    update_window(&sdl, chip8);
+  }
+
+  sdl_close(&sdl);
+  return 0;
+}
